@@ -1,8 +1,9 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const Payment = require('../models/Payment');
-const Cart = require('../models/Cart');
+const Cart = require('../models/Cart'); 
 const User = require('../models/User');
+const Product = require('../models/Product'); 
 const nodemailer = require('nodemailer');
 const pdf = require('html-pdf');
 const dotenv = require('dotenv');
@@ -368,5 +369,74 @@ const getPaymentDetails = async (req, res) => {
     }
 };
 
+// NEW: Controller function for reordering a previous order
+const reorderController = async (req, res) => {
+    try {
+        const { orderId } = req.body;
+        const userId = req.user.id;
 
-module.exports = { checkout, paymentVerification, getPaymentDetails };
+        if (!mongoose.Types.ObjectId.isValid(orderId)) {
+            throw new ApiError(400, "Invalid order ID format.");
+        }
+
+        const order = await Payment.findOne({ _id: orderId, user: userId })
+            .populate({
+                path: 'productData.productId',
+                select: 'name price stock'
+            });
+
+        if (!order) {
+            throw new ApiError(404, "Order not found or not owned by user.");
+        }
+
+        // --- CORRECTED LOGIC START ---
+        // Find all existing cart documents for the user
+        const existingCartItems = await Cart.find({ user: userId });
+
+        const itemsAdded = [];
+        const outOfStockItems = [];
+
+        for (const item of order.productData) {
+            const product = item.productId;
+            if (!product || product.stock < item.quantity) {
+                outOfStockItems.push(product?.name || 'Unknown Product');
+                continue; // Skip if product is out of stock or doesn't exist
+            }
+
+            // Find if the product already exists as a document in the user's cart collection
+            const existingCartItem = existingCartItems.find(
+                cartItem => cartItem.productId.toString() === product._id.toString()
+            );
+
+            if (existingCartItem) {
+                // Product exists, update quantity on that specific document
+                existingCartItem.quantity += item.quantity;
+                await existingCartItem.save();
+            } else {
+                // Product doesn't exist, create a new cart document
+                const newCartItem = new Cart({
+                    user: userId,
+                    productId: product._id,
+                    quantity: item.quantity,
+                });
+                await newCartItem.save();
+            }
+            itemsAdded.push(product.name);
+        }
+        // --- CORRECTED LOGIC END ---
+
+        let message = `Ordered items have been added to your cart.`;
+        if (outOfStockItems.length > 0) {
+            message += ` Note: The following items could not be added as they are out of stock: ${outOfStockItems.join(', ')}.`;
+        }
+
+        res.status(200).json({ success: true, message });
+
+    } catch (error) {
+        console.error("Error during reorder process:", error);
+        sendErrorResponse(res, error, "Internal Server Error during reorder process.");
+    }
+};
+
+
+module.exports = { checkout, paymentVerification, getPaymentDetails, reorderController };
