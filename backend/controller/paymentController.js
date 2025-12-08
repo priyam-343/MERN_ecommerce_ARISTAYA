@@ -284,7 +284,7 @@ const paymentVerification = async (req, res) => {
           }
 
           const transport = nodemailer.createTransport({
-            service: "gmail", host: "smtp.gmail.email", port: 465,
+            service: "gmail", host: "smtp.gmail.com", port: 465,
             auth: { user: process.env.EMAIL, pass: process.env.EMAIL_PASSWORD },
           })
 
